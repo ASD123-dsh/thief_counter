@@ -1,0 +1,90 @@
+/*
+ 文件: src/resources/style_dark.qss
+ 描述: 深色主题样式，与浅色版结构一致，便于运行时切换。
+*/
+
+* {
+  font-family: "Microsoft YaHei";
+  font-size: 12pt;
+}
+
+QWidget {
+  background: #1f242b; /* 深色背景 */
+  color: #e8eaed;      /* 文字颜色 */
+}
+
+QLineEdit {
+  background: #2a3037;
+  border: 1px solid #3a4048;
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #e8eaed;
+}
+
+/* 显示屏使用更大字号 */
+QLineEdit#display {
+  font-size: 28pt;
+  font-weight: bold;
+}
+
+QListWidget {
+  background: #2a3037;
+  border: 1px solid #3a4048;
+  border-radius: 6px;
+  color: #e8eaed;
+}
+
+QToolButton, QPushButton {
+  background: #3a4048;
+  border: 1px solid #505761;
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #e8eaed;
+}
+
+QToolButton:hover, QPushButton:hover {
+  background: #454c55;
+}
+
+QToolButton:pressed, QPushButton:pressed {
+  background: #58606b;
+}
+
+QComboBox {
+  background: #2a3037;
+  border: 1px solid #3a4048;
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: #e8eaed;
+}
+
+QLabel {
+  font-size: 11pt;
+  color: #e8eaed;
+}
+
+/* 自绘系统三键：与系统风格一致（深色） */
+QToolButton#winMinBtn, QToolButton#winMaxBtn, QToolButton#winCloseBtn {
+  background: transparent;
+  border: none;
+  border-radius: 0px;
+  padding: 0px;
+  margin: 0px;
+}
+QToolButton#winMinBtn:hover, QToolButton#winMaxBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+QToolButton#winMinBtn:pressed, QToolButton#winMaxBtn:pressed {
+  background: rgba(255, 255, 255, 0.14);
+}
+QToolButton#winCloseBtn:hover {
+  background: #E81123;
+  color: #ffffff;
+}
+QToolButton#winCloseBtn:pressed {
+  background: #C50F1F;
+  color: #ffffff;
+}
+QWidget#titleBar {
+  background: #1f242b; /* 与窗口背景一致 */
+}

@@ -5,7 +5,7 @@ a = Analysis(
     ['src\\app.py'],
     pathex=[],
     binaries=[],
-    datas=[('D:/work/Self_Made_Program/jisuanqi/.venv/Lib/site-packages/PySide6/translations', 'translations'), ('src\\resources', 'resources')],
+    datas=[('D:/work/Self_Made_Program/jisuanqi/.venv/Lib/site-packages/PySide6/translations', 'translations'), ('src\\resources', 'resources'), ('img', 'img')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -482,7 +482,7 @@ class MainWindow(QMainWindow):
     def _show_help(self) -> None:
         """
         函数: _show_help
-        作用: 弹出当前面板对应的使用说明对话框。
+        作用: 弹出当前计算模式的使用说明对话框，支持点击“反馈”显示二维码。
         参数:
             无。
         返回:
@@ -499,7 +499,93 @@ class MainWindow(QMainWindow):
                 text = widget.get_help_text()
         except Exception:
             pass
-        QMessageBox.information(self, title, text)
+        
+        # 创建自定义对话框
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.resize(400, 300)
+
+        layout = QVBoxLayout(dlg)
+        
+        # 文本区域
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        
+        # 滚动区域（防止文本过长）
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidget(lbl)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        layout.addWidget(scroll)
+
+        # 底部按钮区
+        btn_box = QHBoxLayout()
+        btn_feedback = QPushButton("反馈")
+        btn_feedback.setToolTip("点击查看反馈方式")
+        btn_feedback.clicked.connect(self._show_feedback_qrcode)
+        
+        btn_ok = QPushButton("确定")
+        btn_ok.clicked.connect(dlg.accept)
+        
+        btn_box.addWidget(btn_feedback)
+        btn_box.addStretch()
+        btn_box.addWidget(btn_ok)
+        
+        layout.addLayout(btn_box)
+        dlg.exec()
+
+    def _show_feedback_qrcode(self) -> None:
+        """
+        函数: _show_feedback_qrcode
+        作用: 弹出对话框显示 '联系我.jpg' 二维码图片。
+        参数:
+            无。
+        返回:
+            无。
+        """
+        try:
+            # 定位图片路径
+            if hasattr(sys, "_MEIPASS"):
+                base_dir = sys._MEIPASS
+            else:
+                # 假设 img 在项目根目录，与 src 同级
+                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            
+            img_path = os.path.join(base_dir, "img", "联系我.jpg")
+            
+            if not os.path.exists(img_path):
+                QMessageBox.warning(self, "提示", f"未找到反馈图片：\n{img_path}")
+                return
+
+            # 创建图片弹窗
+            dlg = QDialog(self)
+            dlg.setWindowTitle("扫码反馈")
+            dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+            
+            vbox = QVBoxLayout(dlg)
+            lbl_img = QLabel()
+            pix = QPixmap(img_path)
+            
+            # 限制显示尺寸，避免图片过大
+            if pix.width() > 400 or pix.height() > 400:
+                pix = pix.scaled(400, 400, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                
+            lbl_img.setPixmap(pix)
+            lbl_img.setAlignment(Qt.AlignCenter)
+            
+            lbl_hint = QLabel("请扫描二维码联系作者反馈问题")
+            lbl_hint.setAlignment(Qt.AlignCenter)
+            
+            vbox.addWidget(lbl_img)
+            vbox.addWidget(lbl_hint)
+            
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"无法显示图片：{e}")
 
     def _update_theme_button_label(self) -> None:
         """

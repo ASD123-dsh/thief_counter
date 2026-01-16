@@ -85,7 +85,8 @@ def main() -> None:
         pass
     load_style(app)
     win = MainWindow()
-    win.resize(630, 600)
+    # 增加默认宽度以适应带空格的二进制显示 (630 -> 720)
+    win.resize(640, 600)
     win.show()
     sys.exit(app.exec())
 

@@ -18,7 +18,6 @@ env/
 # Distribution / Build
 build/
 dist/
-*.spec
 
 # Logs
 *.log

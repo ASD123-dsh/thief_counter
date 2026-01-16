@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QComboBox,
     QSpinBox,
+    QSplitter,
 )
 
 from core.memory_store import MemoryStore
@@ -152,8 +153,17 @@ class ProgrammerPanel(QWidget):
         self.out_bin = QLineEdit()
         self.out_oct = QLineEdit()
         for w in (self.out_dec, self.out_hex, self.out_bin, self.out_oct):
-            w.setReadOnly(True)
+            w.setReadOnly(False)  # 修改为可编辑
             w.setAlignment(Qt.AlignLeft)
+
+        # 绑定同步事件
+        self.out_dec.textChanged.connect(lambda txt: self.on_output_changed(txt, "DEC"))
+        self.out_hex.textChanged.connect(lambda txt: self.on_output_changed(txt, "HEX"))
+        self.out_bin.textChanged.connect(lambda txt: self.on_output_changed(txt, "BIN"))
+        self.out_oct.textChanged.connect(lambda txt: self.on_output_changed(txt, "OCT"))
+
+        # 标志位：防止循环更新
+        self._updating = False
 
         # 历史
         self.history = QListWidget()
@@ -188,11 +198,22 @@ class ProgrammerPanel(QWidget):
         # 监听输入与进制变化，自动更新 A 的进制转换显示
         self.input_a.textChanged.connect(self.on_input_changed)
 
+        # 主布局：使用 QSplitter 支持调整宽度
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(10)
-        root.addWidget(left, 1)
-        root.addWidget(self.history, 0)
+        root.setSpacing(0)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left)
+        splitter.addWidget(self.history)
+        
+        # 设置初始比例，保持左侧为主
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        # 设置历史记录的最小宽度，避免被拖动太小
+        self.history.setMinimumWidth(100)
+
+        root.addWidget(splitter)
 
     def get_help_text(self) -> str:
         """
@@ -272,10 +293,80 @@ class ProgrammerPanel(QWidget):
         返回:
             无。
         """
-        self.out_dec.setText(to_base_str(value, "DEC", self.bits))
-        self.out_hex.setText(to_base_str(value, "HEX", self.bits))
-        self.out_bin.setText(to_base_str(value, "BIN", self.bits))
-        self.out_oct.setText(to_base_str(value, "OCT", self.bits))
+        if self._updating:
+            return
+        self._updating = True
+        try:
+            # 获取当前焦点控件，避免覆盖正在输入的内容
+            focus_widget = self.focusWidget()
+            
+            if focus_widget != self.out_dec:
+                self.out_dec.setText(to_base_str(value, "DEC", self.bits))
+            
+            if focus_widget != self.out_hex:
+                self.out_hex.setText(to_base_str(value, "HEX", self.bits))
+            
+            if focus_widget != self.out_bin:
+                # 二进制显示优化：每 4 位插入空格
+                bin_raw = to_base_str(value, "BIN", self.bits)
+                bin_fmt = " ".join(bin_raw[i:i+4] for i in range(0, len(bin_raw), 4))
+                self.out_bin.setText(bin_fmt)
+                # 将光标移动到最左侧，防止因内容过长导致显示截断
+                self.out_bin.setCursorPosition(0)
+            
+            if focus_widget != self.out_oct:
+                # 八进制显示优化：每 3 位插入空格
+                oct_raw = to_base_str(value, "OCT", self.bits)
+                oct_fmt = " ".join(oct_raw[i:i+3] for i in range(0, len(oct_raw), 3))
+                self.out_oct.setText(oct_fmt)
+                self.out_oct.setCursorPosition(0)
+                
+            # 同时更新 A 输入框（如果它不是焦点且当前不在输入 A）
+            if focus_widget != self.input_a:
+                base = self.base_combo.currentData()
+                # 保持 A 输入框显示当前进制的值
+                if base == "DEC":
+                    self.input_a.setText(to_base_str(value, "DEC", self.bits))
+                elif base == "HEX":
+                    self.input_a.setText(to_base_str(value, "HEX", self.bits))
+                elif base == "BIN":
+                    # 二进制输入框也保持带空格格式
+                    bin_raw = to_base_str(value, "BIN", self.bits)
+                    bin_fmt = " ".join(bin_raw[i:i+4] for i in range(0, len(bin_raw), 4))
+                    self.input_a.setText(bin_fmt)
+                elif base == "OCT":
+                    oct_raw = to_base_str(value, "OCT", self.bits)
+                    oct_fmt = " ".join(oct_raw[i:i+3] for i in range(0, len(oct_raw), 3))
+                    self.input_a.setText(oct_fmt)
+        finally:
+            self._updating = False
+
+    def on_output_changed(self, txt: str, base: str) -> None:
+        """
+        函数: on_output_changed
+        作用: 当任意进制输出框内容修改时，同步更新其他进制显示。
+        参数:
+            txt: 当前文本内容。
+            base: 进制类型 (DEC/HEX/BIN/OCT)。
+        返回:
+            无。
+        """
+        if self._updating:
+            return
+            
+        try:
+            # 去除格式化空格并解析
+            clean_txt = txt.replace(" ", "")
+            if not clean_txt:
+                val = 0
+            else:
+                val = parse_input(clean_txt, base)
+            
+            # 更新其他所有显示
+            self.update_outputs(val)
+        except Exception:
+            # 解析失败时不更新其他框，允许用户继续输入
+            pass
 
     def apply_binary(self, op: str) -> None:
         """

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QSizeGrip,
     QInputDialog,
+    QSplitter,
 )
 import os
 import random
@@ -202,12 +203,20 @@ class NormalPanel(QWidget):
         except Exception:
             pass
 
-        # 主布局：左侧为计算器，右侧为历史
+        # 主布局：使用 QSplitter
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(10)
-        root.addWidget(left_box, 1)
-        root.addWidget(self.history, 0)
+        root.setSpacing(0)
+        
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left_box)
+        splitter.addWidget(self.history)
+        
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        self.history.setMinimumWidth(100)
+        
+        root.addWidget(splitter)
 
         # 分页状态
         self._moyu_pages = []  # type: list[str]

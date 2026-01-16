@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QMessageBox,
     QGraphicsOpacityEffect,
+    QSplitter,
 )
  
 
@@ -123,9 +124,17 @@ class ScientificPanel(QWidget):
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(10)
-        root.addWidget(left, 1)
-        root.addWidget(self.history, 0)
+        root.setSpacing(0)
+        
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left)
+        splitter.addWidget(self.history)
+        
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        self.history.setMinimumWidth(100)
+        
+        root.addWidget(splitter)
 
     def get_help_text(self) -> str:
         """

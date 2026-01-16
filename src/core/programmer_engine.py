@@ -40,14 +40,19 @@ def to_base_str(value: int, base: str = "DEC", bits: int = 32) -> str:
     if base == "BIN":
         return format(v, f"0{bits}b")
     if base == "OCT":
-        return format(v, "o")
+        # 八进制根据位宽动态计算填充长度：32位需要11位八进制（2位最高位+3*10），但简单起见我们按位数向上取整填充
+        # 32位最大值 4294967295 -> 37777777777 (11位)
+        # 64位最大值 -> 1777777777777777777777 (22位)
+        # 粗略估算：bits / 3 向上取整
+        width = (bits + 2) // 3
+        return format(v, f"0{width}o")
     return str(v)
 
 
 def parse_input(input_str: str, base: str = "DEC") -> int:
     """
     函数: parse_input
-    作用: 将字符串按进制解析为整数。
+    作用: 将字符串按进制解析为整数。自动去除输入中的空格。
     参数:
         input_str: 输入字符串。
         base: 进制，"DEC"、"HEX" 或 "BIN"。
@@ -56,15 +61,20 @@ def parse_input(input_str: str, base: str = "DEC") -> int:
     """
     if not input_str:
         return 0
+    # 去除所有空格，支持 "0000 0001" 这种格式输入
+    clean_str = input_str.replace(" ", "")
+    if not clean_str:
+        return 0
+        
     if base == "DEC":
-        return int(input_str, 10)
+        return int(clean_str, 10)
     if base == "HEX":
-        return int(input_str, 16)
+        return int(clean_str, 16)
     if base == "BIN":
-        return int(input_str, 2)
+        return int(clean_str, 2)
     if base == "OCT":
-        return int(input_str, 8)
-    return int(input_str, 10)
+        return int(clean_str, 8)
+    return int(clean_str, 10)
 
 
 def bit_and(a: int, b: int, bits: int = 32) -> int:

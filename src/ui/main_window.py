@@ -51,6 +51,7 @@ import sys
 import ctypes
 
 from core.memory_store import MemoryStore
+from core.settings_service import SettingsService
 from ui.normal_panel import NormalPanel
 from ui.programmer_panel import ProgrammerPanel
 from ui.scientific_panel import ScientificPanel
@@ -83,10 +84,9 @@ class MainWindow(QMainWindow):
         self.memory_store = MemoryStore()
 
         # 主题状态：读取持久化设置（默认浅色）
-        settings = QSettings()
-        self.dark_mode: bool = bool(settings.value("dark_mode", False, type=bool))
+        self.dark_mode: bool = SettingsService.dark_mode(False)
         # 置顶状态：读取持久化设置（默认不置顶）
-        self.pin_on_top: bool = bool(settings.value("always_on_top", False, type=bool))
+        self.pin_on_top: bool = SettingsService.always_on_top(False)
 
         # 顶部工具区（模式切换按钮）
         header = self._create_header()
@@ -272,8 +272,7 @@ class MainWindow(QMainWindow):
         self.moyu_path_edit.returnPressed.connect(self._confirm_moyu_path)
         # 预填持久化路径
         try:
-            settings = QSettings()
-            saved = settings.value("moyu_path", "", type=str)
+            saved = SettingsService.moyu_path("")
             if saved:
                 self.moyu_path_edit.setText(saved)
         except Exception:
@@ -615,25 +614,6 @@ class MainWindow(QMainWindow):
         """
         self._apply_theme(not self.dark_mode)
 
-    def showEvent(self, event) -> None:
-        """
-        函数: showEvent
-        作用: 窗口显示后再次尝试应用 Windows 标题栏暗色属性，
-              在部分 Win10 版本中需在窗口可见后调用才会生效。
-        参数:
-            event: 显示事件。
-        返回:
-            无。
-        """
-        try:
-            super().showEvent(event)
-        except Exception:
-            pass
-        try:
-            self._apply_windows_dark_titlebar(self.dark_mode)
-        except Exception:
-            pass
-
     def reveal_moyu_button(self) -> None:
         """
         函数: reveal_moyu_button
@@ -689,15 +669,9 @@ class MainWindow(QMainWindow):
         try:
             if self.stack.currentWidget() is not self.normal_panel:
                 self._switch_to_normal()
-            settings = QSettings()
-            init_path = settings.value("moyu_path", "", type=str)
-            init_opacity = int(settings.value("minimal_opacity_percent", 100, type=int))
-            init_opacity = 1 if init_opacity < 1 else (100 if init_opacity > 100 else init_opacity)
-            try:
-                init_delay = int(settings.value("minimal_hover_delay_ms", 1500, type=int))
-            except Exception:
-                init_delay = 1500
-            init_delay = 0 if init_delay < 0 else (10000 if init_delay > 10000 else init_delay)
+            init_path = SettingsService.moyu_path("")
+            init_opacity = SettingsService.minimal_opacity_percent(100)
+            init_delay = SettingsService.minimal_hover_delay_ms(1500)
             dlg = _MoyuSettingsDialog(self, init_path, init_opacity, init_delay)
             res = dlg.exec()
             if res == QDialog.Accepted:
@@ -719,21 +693,13 @@ class MainWindow(QMainWindow):
                         pass
             else:
                 # 取消：恢复持久化透明度预览，并隐藏设置按钮
-                try:
-                    settings = QSettings()
-                    current = int(settings.value("minimal_opacity_percent", 100, type=int))
-                except Exception:
-                    current = 100
+                current = SettingsService.minimal_opacity_percent(100)
                 try:
                     if hasattr(self.normal_panel, "set_minimal_reader_opacity"):
                         self.normal_panel.set_minimal_reader_opacity(int(current))
                 except Exception:
                     pass
-                try:
-                    settings = QSettings()
-                    d_saved = int(settings.value("minimal_hover_delay_ms", 1500, type=int))
-                except Exception:
-                    d_saved = 1500
+                d_saved = SettingsService.minimal_hover_delay_ms(1500)
                 try:
                     if hasattr(self.normal_panel, "preview_minimal_reader_hover_delay"):
                         self.normal_panel.preview_minimal_reader_hover_delay(int(d_saved))
@@ -764,10 +730,8 @@ class MainWindow(QMainWindow):
             bool: True 表示应用成功；False 表示验证失败（例如路径无效）。
         """
         try:
-            settings = QSettings()
             # 透明度持久化与即时应用
-            p = 1 if int(opacity) < 1 else (100 if int(opacity) > 100 else int(opacity))
-            settings.setValue("minimal_opacity_percent", p)
+            p = SettingsService.set_minimal_opacity_percent(int(opacity))
             try:
                 if hasattr(self.normal_panel, "set_minimal_reader_opacity"):
                     self.normal_panel.set_minimal_reader_opacity(p)
@@ -776,7 +740,7 @@ class MainWindow(QMainWindow):
             # 路径校验并加载
             if path:
                 if os.path.isdir(path):
-                    settings.setValue("moyu_path", path)
+                    SettingsService.set_moyu_path(path)
                     if hasattr(self.normal_panel, "load_moyu_texts_from_path"):
                         self.normal_panel.load_moyu_texts_from_path(path)
                 else:
@@ -821,11 +785,13 @@ class MainWindow(QMainWindow):
             dict 主题字典。
         """
         try:
-            settings = QSettings()
-            bg = str(settings.value("minimal_theme_bg", "#F5F5F7", type=str))
-            fg = str(settings.value("minimal_theme_fg", "#1E1E1E", type=str))
-            ac = str(settings.value("minimal_theme_accent", "#3B82F6", type=str))
-            return {"bg": bg, "fg": fg, "accent": ac, "name": "已保存"}
+            scheme = SettingsService.minimal_theme()
+            return {
+                "bg": scheme.get("bg", "#F5F5F7"),
+                "fg": scheme.get("fg", "#1E1E1E"),
+                "accent": scheme.get("accent", "#3B82F6"),
+                "name": scheme.get("name", "已保存"),
+            }
         except Exception:
             return {"bg": "#F5F5F7", "fg": "#1E1E1E", "accent": "#3B82F6", "name": "默认"}
 
@@ -869,13 +835,9 @@ class MainWindow(QMainWindow):
             if self.stack.currentWidget() is not self.normal_panel:
                 self._switch_to_normal()
             # 尝试读取持久化路径
-            settings = QSettings()
-            saved = settings.value("moyu_path", "", type=str)
+            saved = SettingsService.moyu_path("")
             if saved and os.path.isdir(saved):
-                try:
-                    last = settings.value("moyu_last_file", "", type=str)
-                except Exception:
-                    last = ""
+                last = SettingsService.moyu_last_file("")
                 try:
                     if last:
                         fp = os.path.join(saved, last)
@@ -976,8 +938,7 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(qss)
             self.dark_mode = dark
             # 持久化主题选择
-            settings = QSettings()
-            settings.setValue("dark_mode", dark)
+            SettingsService.set_dark_mode(dark)
             self._update_theme_button_label()
             # 主题切换后重算摸鱼区域高度，避免字体变化导致三行显示不完整
             try:
@@ -1019,8 +980,7 @@ class MainWindow(QMainWindow):
                 self.show()
             except Exception:
                 pass
-        settings = QSettings()
-        settings.setValue("always_on_top", on_top)
+        SettingsService.set_always_on_top(on_top)
         # 保持按钮选中状态与文案同步
         try:
             self.pin_btn.setChecked(on_top)
@@ -1369,7 +1329,9 @@ class MainWindow(QMainWindow):
         try:
             if self.stack.currentWidget() is not self.scientific_panel:
                 self._switch_to_scientific()
-            if hasattr(self.scientific_panel, "_open_game_selector"):
+            if hasattr(self.scientific_panel, "open_game_selector"):
+                self.scientific_panel.open_game_selector()
+            elif hasattr(self.scientific_panel, "_open_game_selector"):
                 self.scientific_panel._open_game_selector()
         except Exception:
             pass
@@ -1729,6 +1691,7 @@ class _MoyuSettingsDialog(QDialog):
         root.addLayout(form)
         # 外观：基础方案网格
         self.selected_scheme = None
+        self._custom1_scheme = None
         self._build_appearance_section(root)
         root.addWidget(btns)
         # 透明度实时预览：仅应用到极简窗口显示，不持久化
@@ -1955,9 +1918,11 @@ class _MoyuSettingsDialog(QDialog):
             self._btn_custom1.setIcon(self._make_swatch_icon(c_bg, c_ac, False))
             self._btn_custom1.setText("🎨 自定义方案")
             sc = {"id": "custom1", "name": "自定义方案", "emoji": "🎨", "bg": c_bg, "fg": c_fg, "accent": c_ac}
+            self._custom1_scheme = dict(sc)
             self._btn_custom1.clicked.connect(lambda checked=False, s=sc: self._on_select_scheme(s))
         else:
             self._btn_custom1.setText("暂无已保存")
+            self._custom1_scheme = None
         custom1_row.addWidget(custom1_lbl)
         custom1_row.addWidget(self._btn_custom1)
         box.addLayout(custom1_row)
@@ -2022,12 +1987,41 @@ class _MoyuSettingsDialog(QDialog):
                     parent.normal_panel.preview_minimal_reader_theme(self.selected_scheme)
                 if hasattr(parent, "scientific_panel"):
                     parent.scientific_panel.preview_game_2048_theme(self.selected_scheme)
+            self._refresh_scheme_icons(str(scheme.get("id", "")))
+        except Exception:
+            pass
+
+    def _refresh_scheme_icons(self, selected_id: str) -> None:
+        """
+        函数: _refresh_scheme_icons
+        作用: 刷新所有方案按钮图标勾选状态（基础/进阶/自定义）。
+        参数:
+            selected_id: 当前选中的方案 id。
+        返回:
+            无。
+        """
+        sid = str(selected_id or "").strip()
+        try:
             for btn, sc in getattr(self, "_scheme_buttons_basic", []):
-                btn.setIcon(self._make_swatch_icon(sc["bg"], sc["accent"], sc["id"] == scheme.get("id")))
+                checked = str(sc.get("id", "")) == sid
+                btn.setIcon(self._make_swatch_icon(sc["bg"], sc["accent"], checked))
                 btn.setText(f"{sc['emoji']} {sc['name']}")
+        except Exception:
+            pass
+        try:
             for btn, sc in getattr(self, "_scheme_buttons_adv", []):
-                btn.setIcon(self._make_swatch_icon(sc["bg"], sc["accent"], sc["id"] == scheme.get("id")))
+                checked = str(sc.get("id", "")) == sid
+                btn.setIcon(self._make_swatch_icon(sc["bg"], sc["accent"], checked))
                 btn.setText(f"{sc['emoji']} {sc['name']}")
+        except Exception:
+            pass
+        try:
+            btn = getattr(self, "_btn_custom1", None)
+            sc = getattr(self, "_custom1_scheme", None)
+            if btn is not None and isinstance(sc, dict):
+                checked = str(sc.get("id", "")) == sid
+                btn.setIcon(self._make_swatch_icon(str(sc.get("bg", "#F5F5F7")), str(sc.get("accent", "#3B82F6")), checked))
+                btn.setText(f"{sc.get('emoji', '🎨')} {sc.get('name', '自定义方案')}")
         except Exception:
             pass
 
@@ -2098,10 +2092,10 @@ class _MoyuSettingsDialog(QDialog):
             settings.setValue("minimal_theme_custom1_fg", fg)
             settings.setValue("minimal_theme_custom1_accent", ac)
             self.selected_scheme = {"id": "custom1", "name": "自定义方案1", "emoji": "🎨", "bg": bg, "fg": fg, "accent": ac}
+            self._custom1_scheme = dict(self.selected_scheme)
             try:
                 if hasattr(self, "_btn_custom1") and self._btn_custom1 is not None:
                     self._btn_custom1.setEnabled(True)
-                    self._btn_custom1.setIcon(self._make_swatch_icon(bg, ac, True))
                     self._btn_custom1.setText("🎨 自定义方案1")
                     sc = dict(self.selected_scheme)
                     try:
@@ -2114,6 +2108,10 @@ class _MoyuSettingsDialog(QDialog):
                     except Exception:
                         pass
                     self._btn_custom1.clicked.connect(lambda checked=False, s=sc: self._on_select_scheme(s))
+            except Exception:
+                pass
+            try:
+                self._refresh_scheme_icons("custom1")
             except Exception:
                 pass
             QMessageBox.information(self, "提示", "自定义方案已保存")
@@ -2178,11 +2176,3 @@ class _MoyuSettingsDialog(QDialog):
             return (L1 + 0.05) / (L2 + 0.05)
         except Exception:
             return 0.0
-        self.game_btn = QToolButton()
-        self.game_btn.setText("选择")
-        self.game_btn.setToolTip("隐藏游戏选择")
-        self.game_btn.setVisible(False)
-        try:
-            self.game_btn.clicked.connect(self._open_game_selector_via_scientific)
-        except Exception:
-            pass

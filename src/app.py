@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QFile, QCoreApplication, QSettings, QTranslator, QLibraryInfo, QLocale
 
 from ui.main_window import MainWindow
+from core.settings_service import SettingsService
 
 
 def resource_path(relative_path: str) -> str:
@@ -41,8 +42,7 @@ def load_style(app: QApplication) -> None:
         无。
     """
     # 读取持久化主题设置
-    settings = QSettings()
-    dark_mode = bool(settings.value("dark_mode", False, type=bool))
+    dark_mode = SettingsService.dark_mode(False)
     qss_file = "resources/style_dark.qss" if dark_mode else "resources/style.qss"
     qss_path = resource_path(qss_file)
     if os.path.exists(qss_path):

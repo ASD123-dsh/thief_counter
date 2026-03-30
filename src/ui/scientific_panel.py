@@ -314,6 +314,17 @@ class ScientificPanel(QWidget):
         except Exception as e:
             self.history.addItem(f"[错误] {expr} -> {e}")
 
+    def open_game_selector(self) -> None:
+        """
+        函数: open_game_selector
+        作用: 对外公开的游戏选择入口，避免外部调用私有方法。
+        参数:
+            无。
+        返回:
+            无。
+        """
+        self._open_game_selector()
+
     def _open_game_selector(self) -> None:
         """
         函数: _open_game_selector

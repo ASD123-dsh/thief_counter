@@ -31,9 +31,12 @@ import os
 import random
 import hashlib
 import time
+import re
+from bisect import bisect_right
 
 from core.expr_parser import safe_eval
 from core.memory_store import MemoryStore
+from core.settings_service import SettingsService
 
 
 class NormalPanel(QWidget):
@@ -196,8 +199,7 @@ class NormalPanel(QWidget):
             pass
         # 预填持久化路径但不自动显示
         try:
-            settings = QSettings()
-            saved = settings.value("moyu_path", "", type=str)
+            saved = SettingsService.moyu_path("")
             if saved:
                 self.moyu_path_edit.setText(saved)
         except Exception:
@@ -221,6 +223,7 @@ class NormalPanel(QWidget):
         # 分页状态
         self._moyu_pages = []  # type: list[str]
         self._moyu_page_index = 0
+        self._moyu_page_char_offsets = []  # type: list[int]
         # 行缓存与分批加载暂存
         self._moyu_line_cache = {}  # key: (width, font_key, content_hash) -> list[str]
         self._moyu_line_staging = []  # 暂存未满一页的行
@@ -237,6 +240,7 @@ class NormalPanel(QWidget):
         self._minimal_reader = None
         self._moyu_prefetch_cache = {}
         self._moyu_full_text = ""
+        self._moyu_progress_key = ""
         self._loader_thread = None
         self._loader_worker = None
         self._dynamic_moyu_height = True
@@ -326,6 +330,7 @@ class NormalPanel(QWidget):
             "- 方向键：↑/← 上一页；↓/→ 下一页。\n"
             "- PageUp/PageDown：上一页/下一页。\n"
             "- W/S：上一页/下一页（摸鱼模式下全局响应）。\n"
+            "- 双击页码：可选择按页码或按章节跳转。\n"
             "【极简阅读窗口】\n"
             "- 显示/隐藏：鼠标移入延迟 1.5 秒显示；移出立即隐藏。\n"
             "- 唤醒：仅当鼠标靠近窗口边缘或停留在窗口区域时唤醒；屏幕边缘不触发。\n"
@@ -383,9 +388,16 @@ class NormalPanel(QWidget):
             if getattr(self, "_in_moyu_mode", False):
                 h = int(self.moyu_view.viewport().height())
                 if h != self._last_moyu_view_h and self._moyu_full_text:
+                    old_total = len(self._moyu_pages) if self._moyu_pages else 0
+                    old_index = int(self._moyu_page_index)
+                    old_ratio = self._moyu_page_ratio(old_index, old_total)
+                    old_char = self._moyu_char_offset_for_index(old_index)
                     self._last_moyu_view_h = h
                     self._compute_moyu_pages_from_text(self._moyu_full_text)
-                    self._show_moyu_page(min(self._moyu_page_index, len(self._moyu_pages) - 1))
+                    if old_char >= 0:
+                        self._show_moyu_page(self._moyu_index_from_char_offset(old_char))
+                    else:
+                        self._show_moyu_page(self._moyu_index_from_ratio(old_ratio, len(self._moyu_pages)))
         except Exception:
             pass
 
@@ -988,7 +1000,7 @@ class NormalPanel(QWidget):
                 if et == event.Type.MouseButtonDblClick:
                     try:
                         if getattr(self, "_in_moyu_mode", False) and self._moyu_pages:
-                            self._prompt_moyu_page_jump()
+                            self._prompt_moyu_jump()
                             return True
                     except Exception:
                         pass
@@ -1051,6 +1063,127 @@ class NormalPanel(QWidget):
                 self._show_moyu_page(int(val) - 1)
         except Exception:
             pass
+
+    def _prompt_moyu_jump(self) -> None:
+        """
+        函数: _prompt_moyu_jump
+        作用: 弹出跳转类型选择（页码/章节），兼容原有页码跳转流程。
+        参数:
+            无。
+        返回:
+            无。
+        """
+        try:
+            if not self._moyu_pages:
+                return
+            choices = ["按页码跳转", "按章节跳转"]
+            val, ok = QInputDialog.getItem(self, "跳转方式", "请选择跳转方式：", choices, 0, False)
+            if not ok:
+                return
+            if val == "按章节跳转":
+                self._prompt_moyu_chapter_jump()
+                return
+            self._prompt_moyu_page_jump()
+        except Exception:
+            # 回退为原有行为，避免影响现有使用
+            self._prompt_moyu_page_jump()
+
+    def _looks_like_moyu_chapter_title(self, line: str) -> bool:
+        """
+        函数: _looks_like_moyu_chapter_title
+        作用: 判断一行文本是否像小说章节标题（中文/英文常见形式）。
+        参数:
+            line: 单行文本。
+        返回:
+            bool。
+        """
+        s = str(line or "").strip().replace("\u3000", " ")
+        if not s:
+            return False
+        if len(s) > 48:
+            return False
+        # 常见无效标题，避免误识别
+        low = s.lower()
+        if low in {"目录", "contents", "content"}:
+            return False
+        patterns = [
+            r"^第[\d0-9零一二三四五六七八九十百千万两〇壹贰叁肆伍陆柒捌玖拾佰仟]+[章节卷部篇回集][^\n\r]{0,24}$",
+            r"^(序章|楔子|前言|引子|后记|尾声|终章|番外[^\n\r]{0,18})$",
+            r"^(chapter|chap\.?)\s*[0-9ivxlcdm]+[^\n\r]{0,24}$",
+            r"^(prologue|epilogue|preface|afterword)$",
+            r"^卷[\d0-9零一二三四五六七八九十百千万两〇壹贰叁肆伍陆柒捌玖拾佰仟]+[^\n\r]{0,24}$",
+        ]
+        for pat in patterns:
+            try:
+                if re.match(pat, s, flags=re.IGNORECASE):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _extract_moyu_chapters(self) -> list:
+        """
+        函数: _extract_moyu_chapters
+        作用: 从当前分页文本中提取章节目录，并映射到页码索引。
+        参数:
+            无。
+        返回:
+            list[tuple[str, int]]: (章节标题, 页索引)
+        """
+        chapters = []
+        seen = set()
+        try:
+            for page_idx, page_text in enumerate(self._moyu_pages or []):
+                for raw in str(page_text or "").splitlines():
+                    title = raw.strip().replace("\u3000", " ")
+                    if not title:
+                        continue
+                    if not self._looks_like_moyu_chapter_title(title):
+                        continue
+                    key = title.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    chapters.append((title, int(page_idx)))
+        except Exception:
+            return []
+        return chapters
+
+    def _prompt_moyu_chapter_jump(self) -> None:
+        """
+        函数: _prompt_moyu_chapter_jump
+        作用: 基于章节目录弹窗选择并跳转到对应页码。
+        参数:
+            无。
+        返回:
+            无。
+        """
+        try:
+            chapters = self._extract_moyu_chapters()
+            if not chapters:
+                try:
+                    self.history.addItem("[提示] 未识别到章节标题，已切换为页码跳转。")
+                except Exception:
+                    pass
+                self._prompt_moyu_page_jump()
+                return
+            labels = [f"{i + 1}. {title}  (第{page + 1}页)" for i, (title, page) in enumerate(chapters)]
+            cur_page = int(self._moyu_page_index)
+            default_idx = 0
+            for i, (_, page) in enumerate(chapters):
+                if int(page) <= cur_page:
+                    default_idx = i
+                else:
+                    break
+            val, ok = QInputDialog.getItem(self, "章节跳转", "请选择章节：", labels, default_idx, False)
+            if not ok or not val:
+                return
+            pick = labels.index(val) if val in labels else default_idx
+            target_page = int(chapters[pick][1])
+            self._show_moyu_page(target_page)
+        except Exception:
+            # 章节跳转异常时回退页码跳转，保证功能可用
+            self._prompt_moyu_page_jump()
 
     def _setup_moyu_fade(self) -> None:
         """
@@ -1339,6 +1472,13 @@ class NormalPanel(QWidget):
                 selected_mode = True
         except Exception:
             pass
+        try:
+            if not selected_name and len(files) == 1:
+                selected_name = str(files[0])
+            progress_name = selected_name if selected_name else ("__multi__" if len(files) > 1 else "")
+            self._set_moyu_progress_context(path, progress_name)
+        except Exception:
+            pass
         # 提示加载进行中，避免用户误以为无响应
         try:
             self.history.addItem("正在加载...")
@@ -1346,9 +1486,11 @@ class NormalPanel(QWidget):
             pass
         # 初始化分页会话（行暂存与页面清空）
         self._moyu_pages = []
+        self._moyu_page_char_offsets = []
         self._moyu_line_staging = []
         self._moyu_line_cache.clear()
         self._moyu_chunk_buffer = ""
+        self._moyu_full_text = ""
         # 计算内容宽度
         width = self._get_moyu_content_width()
         # 改为异步读取：将文件读取放入线程，主线程分页与渲染
@@ -1461,6 +1603,11 @@ class NormalPanel(QWidget):
             def on_finished() -> None:
                 self._finalize_pages_from_staging()
                 try:
+                    if self._moyu_full_text:
+                        self._compute_moyu_pages_from_text(self._moyu_full_text)
+                except Exception:
+                    pass
+                try:
                     restore_idx = self._restore_moyu_page()
                     self._show_moyu_page(restore_idx)
                     self.set_moyu_mode(True)
@@ -1474,10 +1621,9 @@ class NormalPanel(QWidget):
                         pass
                 self.history.addItem("已加载")
                 try:
-                    settings = QSettings()
-                    settings.setValue("moyu_path", path)
+                    SettingsService.set_moyu_path(path)
                     if selected_name:
-                        settings.setValue("moyu_last_file", selected_name)
+                        SettingsService.set_moyu_last_file(selected_name)
                 except Exception:
                     pass
                 try:
@@ -1500,6 +1646,7 @@ class NormalPanel(QWidget):
             self._loader_worker.finished.connect(on_finished)
             self._loader_worker.error.connect(on_error)
             self._loader_thread.start()
+            return
         except Exception as e:
             self.history.addItem(f"[错误] 启动异步加载失败: {e}")
             # 回退到同步模式（原有逻辑）
@@ -1550,80 +1697,13 @@ class NormalPanel(QWidget):
                 if not opened:
                     self.history.addItem(f"[警告] 读取失败: {name}")
                 self._append_lines_to_pages([""])
-            self._finalize_pages_from_staging()
-            try:
-                restore_idx = self._restore_moyu_page()
-                self._show_moyu_page(restore_idx)
-                self.set_moyu_mode(True)
-            except Exception:
-                pass
-            fp = os.path.join(path, name)
-            # 文件标题（作为分隔），按宽度换行后加入（仅多文件时）
-            if not selected_mode and len(files) > 1:
-                header = f"===== {name} =====\n"
-                try:
-                    header_lines = self._wrap_text_to_lines(header, width)
-                except Exception:
-                    header_lines = [header.strip()] if header.strip() else []
-                self._append_lines_to_pages(header_lines)
-            # 尝试 UTF-8，失败再退回到 GBK/ANSI
-            opened = False
-            for enc in (('utf-8', {}), ('gbk', {'errors': 'ignore'})):
-                try:
-                    with open(fp, 'r', encoding=enc[0], **enc[1]) as f:
-                        opened = True
-                        # 每次读取约 64KB 文本，按行缓冲处理；减小块大小以保持界面响应
-                        while True:
-                            chunk = f.read(64 * 1024)
-                            if not chunk:
-                                break
-                            # 合并跨块尾行并切分
-                            combined = self._moyu_chunk_buffer + chunk
-                            parts = combined.splitlines(True)
-                            if parts:
-                                # 如果最后一段不是以换行结束，则保留为尾行缓冲
-                                if not (parts[-1].endswith("\n") or parts[-1].endswith("\r")):
-                                    self._moyu_chunk_buffer = parts[-1]
-                                    commit_text = "".join(parts[:-1])
-                                else:
-                                    self._moyu_chunk_buffer = ""
-                                    commit_text = "".join(parts)
-                            else:
-                                commit_text = combined
-                                self._moyu_chunk_buffer = ""
-                            if commit_text:
-                                lines = self._wrap_text_to_lines(commit_text, width)
-                                self._append_lines_to_pages(lines)
-                                # 主动让出事件循环，避免“未响应”
-                                try:
-                                    QCoreApplication.processEvents()
-                                except Exception:
-                                    pass
-                        # 文件末尾：提交尾行缓冲
-                        if self._moyu_chunk_buffer:
-                            tail_lines = self._wrap_text_to_lines(self._moyu_chunk_buffer, width)
-                            self._append_lines_to_pages(tail_lines)
-                            self._moyu_chunk_buffer = ""
-                        try:
-                            QCoreApplication.processEvents()
-                        except Exception:
-                            pass
-                    break
-                except Exception as e:
-                    opened = False
-                    # 尝试下一个编码
-                    last_err = e
-                    continue
-            if not opened:
-                self.history.addItem(f"[警告] 读取失败: {name}")
-            # 文件结束后补一个空行分隔
-            self._append_lines_to_pages([""])
-            try:
-                QCoreApplication.processEvents()
-            except Exception:
-                pass
         # 会话收尾：若有剩余行，形成最后一页
         self._finalize_pages_from_staging()
+        try:
+            if self._moyu_full_text:
+                self._compute_moyu_pages_from_text(self._moyu_full_text)
+        except Exception:
+            pass
         # 展示恢复页并进入摸鱼模式
         try:
             restore_idx = self._restore_moyu_page()
@@ -1642,8 +1722,9 @@ class NormalPanel(QWidget):
         self.history.addItem("已加载")
         # 持久化路径
         try:
-            settings = QSettings()
-            settings.setValue("moyu_path", path)
+            SettingsService.set_moyu_path(path)
+            if selected_name:
+                SettingsService.set_moyu_last_file(selected_name)
         except Exception:
             pass
         # 若本面板路径框当前可见，加载后隐藏
@@ -1666,23 +1747,36 @@ class NormalPanel(QWidget):
         """
         try:
             width = self._get_moyu_content_width()
-            lines = self._wrap_text_to_lines_doc(text, width)
+            lines, line_offsets = self._wrap_text_to_lines_doc_with_offsets(text, width)
         except Exception:
             # 回退：按原始行切分
             lines = text.splitlines()
+            line_offsets = []
         # 动态每页行数
         n = self._get_lines_per_page()
         n = max(1, int(n))
         pages = []
-        buf = list(lines)
-        while len(buf) >= n:
-            pages.append("\n".join(buf[:n]))
-            buf = buf[n:]
-        if buf:
-            pages.append("\n".join(buf))
+        page_offsets = []
+        i = 0
+        total_lines = len(lines)
+        while i < total_lines:
+            j = min(i + n, total_lines)
+            pages.append("\n".join(lines[i:j]))
+            try:
+                if line_offsets and i < len(line_offsets):
+                    page_offsets.append(max(0, int(line_offsets[i])))
+                else:
+                    page_offsets.append(0)
+            except Exception:
+                page_offsets.append(0)
+            i = j
         if not pages:
             pages = [""]
+            page_offsets = [0]
         self._moyu_pages = pages
+        if len(page_offsets) != len(self._moyu_pages):
+            page_offsets = [0 for _ in self._moyu_pages]
+        self._moyu_page_char_offsets = page_offsets
         self._moyu_page_index = 0
 
     def _get_moyu_content_width(self) -> int:
@@ -1841,6 +1935,155 @@ class NormalPanel(QWidget):
         except Exception:
             pass
 
+    def _set_moyu_progress_context(self, path: str, selected_name: str) -> None:
+        """
+        函数: _set_moyu_progress_context
+        作用: 为当前小说会话设置稳定的进度键（基于目录+文件名），
+              用于在不同入口/分页条件下恢复同一本书进度。
+        参数:
+            path: 小说目录路径。
+            selected_name: 已选文件名（为空时可传占位名）。
+        返回:
+            无。
+        """
+        try:
+            base = os.path.abspath(str(path or ""))
+        except Exception:
+            base = str(path or "")
+        try:
+            base = os.path.normpath(base)
+        except Exception:
+            pass
+        try:
+            base = os.path.normcase(base)
+        except Exception:
+            pass
+        name = str(selected_name or "__default__").strip() or "__default__"
+        try:
+            name = os.path.normcase(name)
+        except Exception:
+            pass
+        raw = f"{base}::{name}"
+        try:
+            self._moyu_progress_key = hashlib.blake2b(raw.encode("utf-8", errors="ignore"), digest_size=12).hexdigest()
+        except Exception:
+            self._moyu_progress_key = ""
+
+    def _current_moyu_progress_group(self) -> str:
+        """
+        函数: _current_moyu_progress_group
+        作用: 返回当前小说进度在 QSettings 中的分组前缀。
+        参数:
+            无。
+        返回:
+            str: 形如 moyu_progress/<key>；若不可用返回空字符串。
+        """
+        key = str(getattr(self, "_moyu_progress_key", "") or "").strip()
+        return f"moyu_progress/{key}" if key else ""
+
+    def _moyu_page_ratio(self, index: int, total: int) -> float:
+        """
+        函数: _moyu_page_ratio
+        作用: 将页索引映射为 0~1 比例，便于跨分页参数恢复阅读位置。
+        参数:
+            index: 当前页索引（0基）。
+            total: 当前总页数。
+        返回:
+            float: 归一化位置比例。
+        """
+        try:
+            t = int(total)
+            i = int(index)
+        except Exception:
+            return 0.0
+        if t <= 1:
+            return 0.0
+        i = max(0, min(i, t - 1))
+        return float(i) / float(t - 1)
+
+    def _moyu_index_from_ratio(self, ratio: float, total: int) -> int:
+        """
+        函数: _moyu_index_from_ratio
+        作用: 将 0~1 比例映射回当前分页索引。
+        参数:
+            ratio: 进度比例。
+            total: 当前总页数。
+        返回:
+            int: 映射后的页索引（0基）。
+        """
+        try:
+            t = int(total)
+        except Exception:
+            t = 0
+        if t <= 1:
+            return 0
+        try:
+            r = float(ratio)
+        except Exception:
+            r = 0.0
+        if r < 0.0:
+            r = 0.0
+        if r > 1.0:
+            r = 1.0
+        idx = int(round(r * float(t - 1)))
+        return max(0, min(idx, t - 1))
+
+    def _moyu_char_offset_for_index(self, index: int) -> int:
+        """
+        函数: _moyu_char_offset_for_index
+        作用: 获取指定页索引在全文中的字符偏移锚点（页起始字符位置）。
+        参数:
+            index: 页索引（0基）。
+        返回:
+            int: 字符偏移；无法获取时返回 -1。
+        """
+        try:
+            total = len(self._moyu_pages) if self._moyu_pages else 0
+            if total <= 0:
+                return -1
+            idx = max(0, min(int(index), total - 1))
+            offsets = self._moyu_page_char_offsets if isinstance(self._moyu_page_char_offsets, list) else []
+            if len(offsets) == total:
+                return max(0, int(offsets[idx]))
+            text = str(getattr(self, "_moyu_full_text", "") or "")
+            if not text:
+                return -1
+            ratio = self._moyu_page_ratio(idx, total)
+            return max(0, min(int(round(ratio * max(0, len(text) - 1))), max(0, len(text) - 1)))
+        except Exception:
+            return -1
+
+    def _moyu_index_from_char_offset(self, char_offset: int) -> int:
+        """
+        函数: _moyu_index_from_char_offset
+        作用: 根据全文字符偏移锚点，映射到当前分页索引。
+        参数:
+            char_offset: 字符偏移。
+        返回:
+            int: 当前分页下最接近的页索引（0基）。
+        """
+        try:
+            total = len(self._moyu_pages) if self._moyu_pages else 0
+            if total <= 1:
+                return 0
+            pos = int(char_offset)
+            if pos < 0:
+                return 0
+            offsets = self._moyu_page_char_offsets if isinstance(self._moyu_page_char_offsets, list) else []
+            if len(offsets) == total:
+                idx = bisect_right(offsets, pos) - 1
+                if idx < 0:
+                    idx = 0
+                return max(0, min(int(idx), total - 1))
+            text = str(getattr(self, "_moyu_full_text", "") or "")
+            if text:
+                max_pos = max(1, len(text) - 1)
+                ratio = float(max(0, min(pos, max_pos))) / float(max_pos)
+                return self._moyu_index_from_ratio(ratio, total)
+            return 0
+        except Exception:
+            return 0
+
     def _persist_moyu_page(self) -> None:
         """
         函数: _persist_moyu_page
@@ -1852,14 +2095,27 @@ class NormalPanel(QWidget):
         """
         try:
             settings = QSettings()
-            settings.setValue("moyu_last_page", int(self._moyu_page_index))
+            index = int(self._moyu_page_index)
+            settings.setValue("moyu_last_page", index)
+            char_offset = self._moyu_char_offset_for_index(index)
+            if char_offset >= 0:
+                settings.setValue("moyu_last_char_offset", int(char_offset))
+            group = self._current_moyu_progress_group()
+            if group:
+                total = len(self._moyu_pages) if self._moyu_pages else 0
+                settings.setValue(f"{group}/page", index)
+                settings.setValue(f"{group}/ratio", float(self._moyu_page_ratio(index, total)))
+                if char_offset >= 0:
+                    settings.setValue(f"{group}/char_offset", int(char_offset))
         except Exception:
             pass
 
     def _restore_moyu_page(self) -> int:
         """
         函数: _restore_moyu_page
-        作用: 从 QSettings 读取上次观看页码；读取失败返回 0。
+        作用: 从 QSettings 恢复当前小说阅读位置；
+              优先使用按小说保存的字符锚点，再回退按小说比例/页码，
+              最后回退全局字符锚点与全局页码。
         参数:
             无。
         返回:
@@ -1867,8 +2123,41 @@ class NormalPanel(QWidget):
         """
         try:
             settings = QSettings()
+            total = len(self._moyu_pages) if self._moyu_pages else 0
+            group = self._current_moyu_progress_group()
+            if group:
+                char_val = settings.value(f"{group}/char_offset", None)
+                if char_val is not None and str(char_val).strip() != "":
+                    try:
+                        return self._moyu_index_from_char_offset(int(float(char_val)))
+                    except Exception:
+                        pass
+                ratio_val = settings.value(f"{group}/ratio", None)
+                if ratio_val is not None and str(ratio_val).strip() != "":
+                    try:
+                        return self._moyu_index_from_ratio(float(ratio_val), total)
+                    except Exception:
+                        pass
+                page_val = settings.value(f"{group}/page", None)
+                if page_val is not None and str(page_val).strip() != "":
+                    try:
+                        idx = int(page_val)
+                        if total > 0:
+                            return max(0, min(idx, total - 1))
+                        return max(0, idx)
+                    except Exception:
+                        pass
+            global_char = settings.value("moyu_last_char_offset", None)
+            if global_char is not None and str(global_char).strip() != "":
+                try:
+                    return self._moyu_index_from_char_offset(int(float(global_char)))
+                except Exception:
+                    pass
             val = settings.value("moyu_last_page", 0, type=int)
-            return int(val) if isinstance(val, int) else 0
+            idx = int(val) if isinstance(val, int) else int(val)
+            if total > 0:
+                return max(0, min(idx, total - 1))
+            return max(0, idx)
         except Exception:
             return 0
 
@@ -1901,6 +2190,22 @@ class NormalPanel(QWidget):
             list[str]。
         """
         try:
+            lines, _ = self._wrap_text_to_lines_doc_with_offsets(text, width)
+            return lines
+        except Exception:
+            return text.splitlines()
+
+    def _wrap_text_to_lines_doc_with_offsets(self, text: str, width: int):
+        """
+        函数: _wrap_text_to_lines_doc_with_offsets
+        作用: 使用 QTextDocument 按指定宽度换行，返回行文本与其在全文中的起始字符偏移。
+        参数:
+            text: 原始文本。
+            width: 内容宽度（像素）。
+        返回:
+            tuple[list[str], list[int]]。
+        """
+        try:
             from PySide6.QtGui import QTextDocument, QTextOption
             doc = QTextDocument()
             doc.setDefaultFont(self.moyu_view.font())
@@ -1916,6 +2221,7 @@ class NormalPanel(QWidget):
             except Exception:
                 pass
             lines = []
+            offsets = []
             blk = doc.firstBlock()
             while blk.isValid():
                 lay = blk.layout()
@@ -1924,6 +2230,11 @@ class NormalPanel(QWidget):
                     cnt = lay.lineCount()
                 except Exception:
                     cnt = 0
+                base = 0
+                try:
+                    base = int(blk.position())
+                except Exception:
+                    base = 0
                 for i in range(cnt):
                     try:
                         ln = lay.lineAt(i)
@@ -1931,17 +2242,24 @@ class NormalPanel(QWidget):
                         length = int(ln.textLength())
                         seg = blk.text()[start:start + length]
                         lines.append(seg)
+                        offsets.append(base + start)
                     except Exception:
                         pass
                 blk = blk.next()
             if not lines:
                 try:
-                    return self._wrap_text_to_lines(text, width)
+                    lines = self._wrap_text_to_lines(text, width)
                 except Exception:
-                    pass
-            return lines
+                    lines = text.splitlines()
+                offsets = [0 for _ in lines]
+            if len(offsets) != len(lines):
+                offsets = [0 for _ in lines]
+            return lines, offsets
         except Exception:
-            return text.splitlines()
+            lines = text.splitlines()
+            if not lines:
+                lines = [""]
+            return lines, [0 for _ in lines]
 
     def _prefetch_neighbors(self, index: int) -> None:
         """

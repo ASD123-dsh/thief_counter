@@ -1,11 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+ROOT = Path(globals().get("SPECPATH", Path.cwd())).resolve()
+PYSIDE_TRANSLATIONS = ROOT / ".venv" / "Lib" / "site-packages" / "PySide6" / "translations"
+datas = []
+if PYSIDE_TRANSLATIONS.exists():
+    datas.append((str(PYSIDE_TRANSLATIONS), "translations"))
+datas.extend([
+    (str(ROOT / "src" / "resources"), "resources"),
+    (str(ROOT / "img"), "img"),
+])
 
 a = Analysis(
     ['src\\app.py'],
     pathex=[],
     binaries=[],
-    datas=[('D:/work/Self_Made_Program/jisuanqi/.venv/Lib/site-packages/PySide6/translations', 'translations'), ('src\\resources', 'resources'), ('img', 'img')],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +46,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['d:\\work\\Self_Made_Program\\jisuanqi\\计算器.ico'],
+    icon=[str(ROOT / "计算器.ico")],
 )

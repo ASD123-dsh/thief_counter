@@ -1659,6 +1659,10 @@ class NormalPanel(QWidget):
                     except Exception:
                         header_lines = [header.strip()] if header.strip() else []
                     self._append_lines_to_pages(header_lines)
+                    try:
+                        self._moyu_full_text += header
+                    except Exception:
+                        pass
                 opened = False
                 for enc in (('utf-8', {}), ('gbk', {'errors': 'ignore'})):
                     try:
@@ -1684,12 +1688,20 @@ class NormalPanel(QWidget):
                                     lines = self._wrap_text_to_lines_doc(commit_text, width)
                                     self._append_lines_to_pages(lines)
                                     try:
+                                        self._moyu_full_text += commit_text
+                                    except Exception:
+                                        pass
+                                    try:
                                         QCoreApplication.processEvents()
                                     except Exception:
                                         pass
                             if self._moyu_chunk_buffer:
                                 tail_lines = self._wrap_text_to_lines_doc(self._moyu_chunk_buffer, width)
                                 self._append_lines_to_pages(tail_lines)
+                                try:
+                                    self._moyu_full_text += self._moyu_chunk_buffer
+                                except Exception:
+                                    pass
                                 self._moyu_chunk_buffer = ""
                     except Exception:
                         opened = False
@@ -1981,6 +1993,37 @@ class NormalPanel(QWidget):
         key = str(getattr(self, "_moyu_progress_key", "") or "").strip()
         return f"moyu_progress/{key}" if key else ""
 
+    def _moyu_valid_page_offsets(self) -> list:
+        """
+        函数: _moyu_valid_page_offsets
+        作用: 校验当前页起始字符偏移表是否可用于精确恢复阅读位置；
+              仅当长度匹配且严格递增时返回规范化结果。
+        参数:
+            无。
+        返回:
+            list[int]。
+        """
+        try:
+            total = len(self._moyu_pages) if self._moyu_pages else 0
+            if total <= 0:
+                return []
+            offsets = self._moyu_page_char_offsets if isinstance(self._moyu_page_char_offsets, list) else []
+            if len(offsets) != total:
+                return []
+            out = []
+            prev = None
+            for raw in offsets:
+                val = int(raw)
+                if val < 0:
+                    return []
+                if prev is not None and val <= prev:
+                    return []
+                out.append(val)
+                prev = val
+            return out
+        except Exception:
+            return []
+
     def _moyu_page_ratio(self, index: int, total: int) -> float:
         """
         函数: _moyu_page_ratio
@@ -2042,8 +2085,8 @@ class NormalPanel(QWidget):
             if total <= 0:
                 return -1
             idx = max(0, min(int(index), total - 1))
-            offsets = self._moyu_page_char_offsets if isinstance(self._moyu_page_char_offsets, list) else []
-            if len(offsets) == total:
+            offsets = self._moyu_valid_page_offsets()
+            if offsets:
                 return max(0, int(offsets[idx]))
             text = str(getattr(self, "_moyu_full_text", "") or "")
             if not text:
@@ -2069,8 +2112,8 @@ class NormalPanel(QWidget):
             pos = int(char_offset)
             if pos < 0:
                 return 0
-            offsets = self._moyu_page_char_offsets if isinstance(self._moyu_page_char_offsets, list) else []
-            if len(offsets) == total:
+            offsets = self._moyu_valid_page_offsets()
+            if offsets:
                 idx = bisect_right(offsets, pos) - 1
                 if idx < 0:
                     idx = 0
@@ -2125,34 +2168,54 @@ class NormalPanel(QWidget):
             settings = QSettings()
             total = len(self._moyu_pages) if self._moyu_pages else 0
             group = self._current_moyu_progress_group()
+            offsets_valid = bool(self._moyu_valid_page_offsets())
             if group:
-                char_val = settings.value(f"{group}/char_offset", None)
-                if char_val is not None and str(char_val).strip() != "":
-                    try:
-                        return self._moyu_index_from_char_offset(int(float(char_val)))
-                    except Exception:
-                        pass
+                ratio_idx = None
                 ratio_val = settings.value(f"{group}/ratio", None)
                 if ratio_val is not None and str(ratio_val).strip() != "":
                     try:
-                        return self._moyu_index_from_ratio(float(ratio_val), total)
+                        ratio_idx = self._moyu_index_from_ratio(float(ratio_val), total)
                     except Exception:
                         pass
+                page_idx = None
                 page_val = settings.value(f"{group}/page", None)
                 if page_val is not None and str(page_val).strip() != "":
                     try:
                         idx = int(page_val)
                         if total > 0:
-                            return max(0, min(idx, total - 1))
-                        return max(0, idx)
+                            page_idx = max(0, min(idx, total - 1))
+                        else:
+                            page_idx = max(0, idx)
                     except Exception:
                         pass
-            global_char = settings.value("moyu_last_char_offset", None)
-            if global_char is not None and str(global_char).strip() != "":
-                try:
-                    return self._moyu_index_from_char_offset(int(float(global_char)))
-                except Exception:
-                    pass
+                if offsets_valid:
+                    char_val = settings.value(f"{group}/char_offset", None)
+                    if char_val is not None and str(char_val).strip() != "":
+                        try:
+                            char_idx = self._moyu_index_from_char_offset(int(float(char_val)))
+                            if ratio_idx is not None:
+                                tolerance = max(3, int(total / 100)) if total > 0 else 3
+                                if abs(int(char_idx) - int(ratio_idx)) <= tolerance:
+                                    return int(char_idx)
+                            elif page_idx is not None:
+                                tolerance = max(5, int(total / 50)) if total > 0 else 5
+                                if abs(int(char_idx) - int(page_idx)) <= tolerance:
+                                    return int(char_idx)
+                            else:
+                                return int(char_idx)
+                        except Exception:
+                            pass
+                if ratio_idx is not None:
+                    return int(ratio_idx)
+                if page_idx is not None:
+                    return int(page_idx)
+            if offsets_valid:
+                global_char = settings.value("moyu_last_char_offset", None)
+                if global_char is not None and str(global_char).strip() != "":
+                    try:
+                        return self._moyu_index_from_char_offset(int(float(global_char)))
+                    except Exception:
+                        pass
             val = settings.value("moyu_last_page", 0, type=int)
             idx = int(val) if isinstance(val, int) else int(val)
             if total > 0:
@@ -2194,6 +2257,56 @@ class NormalPanel(QWidget):
             return lines
         except Exception:
             return text.splitlines()
+
+    def _wrap_text_to_lines_fallback_with_offsets(self, text: str, width: int):
+        """
+        函数: _wrap_text_to_lines_fallback_with_offsets
+        作用: 当 QTextDocument 偏移提取失败时，基于原文段落顺序生成
+              物理行与近似字符偏移，保证页起始偏移表仍保持递增。
+        参数:
+            text: 原始文本。
+            width: 内容宽度（像素）。
+        返回:
+            tuple[list[str], list[int]]。
+        """
+        try:
+            raws = text.splitlines(True)
+        except Exception:
+            raws = []
+        if not raws:
+            if text:
+                raws = [text]
+            else:
+                return [], []
+        lines = []
+        offsets = []
+        pos = 0
+        for raw in raws:
+            para = raw
+            newline_len = 0
+            if raw.endswith("\r\n"):
+                para = raw[:-2]
+                newline_len = 2
+            elif raw.endswith("\n") or raw.endswith("\r"):
+                para = raw[:-1]
+                newline_len = 1
+            try:
+                if para == "":
+                    wrapped = [""]
+                else:
+                    wrapped = self._wrap_text_to_lines(para, width)
+            except Exception:
+                wrapped = [para] if para != "" else [""]
+            if not wrapped:
+                wrapped = [""]
+            rel = 0
+            for seg in wrapped:
+                seg_text = str(seg)
+                lines.append(seg_text)
+                offsets.append(max(0, int(pos + rel)))
+                rel += len(seg_text)
+            pos += len(para) + newline_len
+        return lines, offsets
 
     def _wrap_text_to_lines_doc_with_offsets(self, text: str, width: int):
         """
@@ -2246,20 +2359,17 @@ class NormalPanel(QWidget):
                     except Exception:
                         pass
                 blk = blk.next()
-            if not lines:
-                try:
-                    lines = self._wrap_text_to_lines(text, width)
-                except Exception:
-                    lines = text.splitlines()
-                offsets = [0 for _ in lines]
-            if len(offsets) != len(lines):
-                offsets = [0 for _ in lines]
+            if not lines or len(offsets) != len(lines):
+                return self._wrap_text_to_lines_fallback_with_offsets(text, width)
             return lines, offsets
         except Exception:
-            lines = text.splitlines()
-            if not lines:
-                lines = [""]
-            return lines, [0 for _ in lines]
+            try:
+                return self._wrap_text_to_lines_fallback_with_offsets(text, width)
+            except Exception:
+                lines = text.splitlines()
+                if not lines:
+                    lines = [""]
+                return lines, [0 for _ in lines]
 
     def _prefetch_neighbors(self, index: int) -> None:
         """

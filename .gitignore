@@ -14,7 +14,7 @@ env/
 .trae/
 *.swp
 *.swo
-
+.waylog/
 # Distribution / Build
 build/
 dist/

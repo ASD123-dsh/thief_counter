@@ -52,6 +52,7 @@ import ctypes
 
 from core.memory_store import MemoryStore
 from core.settings_service import SettingsService
+from ui.checksum_panel import ChecksumPanel
 from ui.normal_panel import NormalPanel
 from ui.programmer_panel import ProgrammerPanel
 from ui.scientific_panel import ScientificPanel
@@ -97,9 +98,11 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.normal_panel = NormalPanel(self.memory_store)
         self.programmer_panel = ProgrammerPanel(self.memory_store, bits=32)
+        self.checksum_panel = ChecksumPanel(self.memory_store)
         self.scientific_panel = ScientificPanel(self.memory_store, default_angle_mode="deg")
         self.stack.addWidget(self.normal_panel)
         self.stack.addWidget(self.programmer_panel)
+        self.stack.addWidget(self.checksum_panel)
         self.stack.addWidget(self.scientific_panel)
 
         # 根布局
@@ -230,11 +233,13 @@ class MainWindow(QMainWindow):
         menu = QMenu(self.mode_btn)
         act_normal = menu.addAction("普通计算器")
         act_programmer = menu.addAction("程序员计算器")
+        act_checksum = menu.addAction("校验和计算")
         act_scientific = menu.addAction("科学计算器")
         self.mode_btn.setMenu(menu)
 
         act_normal.triggered.connect(self._switch_to_normal)
         act_programmer.triggered.connect(self._switch_to_programmer)
+        act_checksum.triggered.connect(self._switch_to_checksum)
         act_scientific.triggered.connect(self._switch_to_scientific)
 
         self.title_label = QLabel("程序员计算器")
@@ -461,6 +466,22 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.title_label.setText("程序员计算器")
+
+    def _switch_to_checksum(self) -> None:
+        """
+        函数: _switch_to_checksum
+        作用: 切换到校验和计算模式，并更新标题文案。
+        参数:
+            无。
+        返回:
+            无。
+        """
+        self.stack.setCurrentWidget(self.checksum_panel)
+        try:
+            self.game_btn.setVisible(False)
+        except Exception:
+            pass
+        self.title_label.setText("校验和计算")
 
     def _switch_to_scientific(self) -> None:
         """

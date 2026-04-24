@@ -20,9 +20,21 @@ QLineEdit {
   padding: 6px 10px;
 }
 
+QPlainTextEdit {
+  background: #ffffff;
+  border: 1px solid #dfe4ea;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
 /* 显示屏使用更大字号 */
 QLineEdit#display {
   font-size: 28pt;
+  font-weight: bold;
+}
+
+QPlainTextEdit#display {
+  font-size: 14pt;
   font-weight: bold;
 }
 
@@ -54,8 +66,78 @@ QComboBox {
   padding: 4px 6px;
 }
 
+QCheckBox {
+  spacing: 6px;
+}
+
 QLabel {
   font-size: 11pt;
+}
+
+QTabWidget#checksumTabs {
+  background: transparent;
+}
+
+QTabWidget#checksumTabs::pane {
+  border: 1px solid #dfe4ea;
+  border-radius: 6px;
+  background: #ffffff;
+  top: -1px;
+}
+
+QTabWidget#checksumTabs QTabBar::tab {
+  background: #e9eef3;
+  border: 1px solid #d0d7de;
+  border-bottom: none;
+  padding: 8px 10px;
+  min-width: 0px;
+}
+
+QTabWidget#checksumTabs QTabBar::tab:first {
+  border-top-left-radius: 6px;
+}
+
+QTabWidget#checksumTabs QTabBar::tab:last {
+  border-top-right-radius: 6px;
+}
+
+QTabWidget#checksumTabs QTabBar::tab:selected {
+  background: #ffffff;
+  color: #2c3e50;
+}
+
+QTabWidget#checksumTabs QTabBar::tab:!selected {
+  color: #5c6b7a;
+}
+
+QTabWidget#checksumTabs QTabBar::tab:hover:!selected {
+  background: #dde4ea;
+}
+
+QTabWidget#checksumTabs QTabBar::scroller {
+  width: 0px;
+}
+
+QWidget#checksumNavBar {
+  background: transparent;
+}
+
+QPushButton#checksumNavBtn {
+  background: #e9eef3;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+QPushButton#checksumNavBtn:hover:!checked {
+  background: #dde4ea;
+}
+
+QPushButton#checksumNavBtn:checked {
+  background: #ffffff;
+  border-color: #dfe4ea;
+  color: #2c3e50;
+  font-weight: bold;
 }
 
 /* 自绘系统三键：与系统风格一致（浅色） */

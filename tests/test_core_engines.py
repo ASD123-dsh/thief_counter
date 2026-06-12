@@ -3,6 +3,8 @@ import math
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +12,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from core.book_loader import (
+    is_supported_book_file,
+    list_supported_book_files,
+    load_book_content,
+    load_book_text,
+)
 from core.expr_parser import safe_eval
 from core.checksum_engine import (
     append_checksum_bytes,
@@ -131,6 +139,231 @@ class TestChecksumEngine(unittest.TestCase):
         self.assertEqual(checksum_value_to_bytes(0x1234, 16, "little"), b"\x34\x12")
         self.assertEqual(format_checksum_bytes(0x1234, 16, "little"), "34 12")
         self.assertEqual(append_checksum_bytes(b"\x68\x01", 0xA0, 8, "big"), b"\x68\x01\xA0")
+
+
+class TestBookLoader(unittest.TestCase):
+    def test_supported_book_file_detection(self) -> None:
+        self.assertTrue(is_supported_book_file("novel.txt"))
+        self.assertTrue(is_supported_book_file("novel.EPUB"))
+        self.assertFalse(is_supported_book_file("novel.pdf"))
+
+    def test_list_supported_book_files_filters_and_sorts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "b.epub").write_bytes(b"epub")
+            (root / "A.txt").write_text("txt", encoding="utf-8")
+            (root / "ignore.md").write_text("md", encoding="utf-8")
+            files = list_supported_book_files(str(root))
+            self.assertEqual(files, ["A.txt", "b.epub"])
+
+    def test_load_book_text_reads_epub_in_spine_order(self) -> None:
+        with TemporaryDirectory() as tmp:
+            epub_path = Path(tmp) / "sample.epub"
+            with zipfile.ZipFile(epub_path, "w") as zf:
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+""",
+                )
+                zf.writestr(
+                    "OPS/content.opf",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <manifest>
+    <item id="chap1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chap2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="chap1"/>
+    <itemref idref="chap2"/>
+  </spine>
+</package>
+""",
+                )
+                zf.writestr(
+                    "OPS/chapter1.xhtml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <h1>第一章</h1>
+    <p>你好，世界。</p>
+  </body>
+</html>
+""",
+                )
+                zf.writestr(
+                    "OPS/chapter2.xhtml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <h1>第二章</h1>
+    <p>继续阅读。</p>
+  </body>
+</html>
+""",
+                )
+
+            text = load_book_text(str(epub_path))
+            self.assertIn("第一章", text)
+            self.assertIn("你好，世界。", text)
+            self.assertIn("第二章", text)
+            self.assertIn("继续阅读。", text)
+            self.assertLess(text.index("第一章"), text.index("第二章"))
+
+    def test_load_book_content_reads_epub_nav_chapters(self) -> None:
+        with TemporaryDirectory() as tmp:
+            epub_path = Path(tmp) / "nav.epub"
+            with zipfile.ZipFile(epub_path, "w") as zf:
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+""",
+                )
+                zf.writestr(
+                    "OPS/package.opf",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="chap1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chap2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="chap1"/>
+    <itemref idref="chap2"/>
+  </spine>
+</package>
+""",
+                )
+                zf.writestr(
+                    "OPS/nav.xhtml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="chapter1.xhtml#c1">开篇</a></li>
+        <li><a href="chapter2.xhtml#c2">终章</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>
+""",
+                )
+                zf.writestr(
+                    "OPS/chapter1.xhtml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <h1 id="c1">第一章</h1>
+    <p>这里是开篇。</p>
+  </body>
+</html>
+""",
+                )
+                zf.writestr(
+                    "OPS/chapter2.xhtml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <h1 id="c2">第二章</h1>
+    <p>这里是终章。</p>
+  </body>
+</html>
+""",
+                )
+
+            content = load_book_content(str(epub_path))
+            self.assertEqual([chapter.title for chapter in content.chapters], ["开篇", "终章"])
+            self.assertLess(content.chapters[0].char_offset, content.chapters[1].char_offset)
+            self.assertIn("第一章", content.text)
+            self.assertIn("第二章", content.text)
+
+    def test_load_book_content_reads_epub_ncx_chapters(self) -> None:
+        with TemporaryDirectory() as tmp:
+            epub_path = Path(tmp) / "ncx.epub"
+            with zipfile.ZipFile(epub_path, "w") as zf:
+                zf.writestr(
+                    "META-INF/container.xml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+""",
+                )
+                zf.writestr(
+                    "OPS/content.opf",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="chap1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chap2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="chap1"/>
+    <itemref idref="chap2"/>
+  </spine>
+</package>
+""",
+                )
+                zf.writestr(
+                    "OPS/toc.ncx",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="n1" playOrder="1">
+      <navLabel><text>序章</text></navLabel>
+      <content src="chapter1.xhtml#intro"/>
+    </navPoint>
+    <navPoint id="n2" playOrder="2">
+      <navLabel><text>尾章</text></navLabel>
+      <content src="chapter2.xhtml#finale"/>
+    </navPoint>
+  </navMap>
+</ncx>
+""",
+                )
+                zf.writestr(
+                    "OPS/chapter1.xhtml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <h2 id="intro">序章标题</h2>
+    <p>正文一。</p>
+  </body>
+</html>
+""",
+                )
+                zf.writestr(
+                    "OPS/chapter2.xhtml",
+                    """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <h2 id="finale">尾章标题</h2>
+    <p>正文二。</p>
+  </body>
+</html>
+""",
+                )
+
+            content = load_book_content(str(epub_path))
+            self.assertEqual([chapter.title for chapter in content.chapters], ["序章", "尾章"])
+            self.assertLess(content.chapters[0].char_offset, content.chapters[1].char_offset)
+            self.assertIn("正文一。", content.text)
+            self.assertIn("正文二。", content.text)
 
 
 if __name__ == "__main__":

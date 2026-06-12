@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
         # 隐藏摸鱼设置按钮：初始隐藏，解锁后显示，位于“模式”按钮之后
         self.moyu_btn = QToolButton()
         self.moyu_btn.setText("设置")
-        self.moyu_btn.setToolTip("摸鱼设置：指定TXT目录")
+        self.moyu_btn.setToolTip("摸鱼设置：指定电子书目录")
         self.moyu_btn.setVisible(False)
         try:
             # 取消下拉菜单模式，改为点击弹出设置对话框
@@ -272,7 +272,7 @@ class MainWindow(QMainWindow):
 
         # 摸鱼路径粘贴框：位于当前模式标题之后，默认隐藏
         self.moyu_path_edit = QLineEdit()
-        self.moyu_path_edit.setPlaceholderText("粘贴TXT目录路径后按回车确认")
+        self.moyu_path_edit.setPlaceholderText("粘贴电子书目录路径后按回车确认")
         self.moyu_path_edit.setVisible(False)
         self.moyu_path_edit.returnPressed.connect(self._confirm_moyu_path)
         # 预填持久化路径
@@ -680,7 +680,7 @@ class MainWindow(QMainWindow):
     def _open_moyu_settings_dialog(self) -> None:
         """
         函数: _open_moyu_settings_dialog
-        作用: 点击“设置”按钮后，弹出包含 TXT 目录与极简透明度的设置对话框，
+        作用: 点击“设置”按钮后，弹出包含电子书目录与极简透明度的设置对话框，
               提供“确定/取消/应用”按钮；确定后应用并隐藏设置按钮。
         参数:
             无。
@@ -744,7 +744,7 @@ class MainWindow(QMainWindow):
         函数: _apply_moyu_settings
         作用: 应用摸鱼设置：保存路径与透明度，并即时加载/应用效果。
         参数:
-            path: TXT 目录路径。
+            path: 电子书目录路径。
             opacity: 极简阅读透明度（1~100）。
             hide_button: 是否在确认后隐藏设置按钮。
         返回:
@@ -819,7 +819,7 @@ class MainWindow(QMainWindow):
     def _confirm_moyu_path(self) -> None:
         """
         函数: _confirm_moyu_path
-        作用: 从顶部路径框读取目录并交由标准计算器面板加载TXT内容；成功后隐藏路径框与设置按钮。
+        作用: 从顶部路径框读取目录并交由标准计算器面板加载电子书内容；成功后隐藏路径框与设置按钮。
         参数:
             无。
         返回:
@@ -828,7 +828,7 @@ class MainWindow(QMainWindow):
         try:
             path = self.moyu_path_edit.text().strip()
             if not path:
-                QMessageBox.information(self, "提示", "请输入TXT目录路径")
+                QMessageBox.information(self, "提示", "请输入电子书目录路径")
                 return
             if not os.path.isdir(path):
                 QMessageBox.warning(self, "错误", f"非有效目录: {path}")
@@ -845,7 +845,7 @@ class MainWindow(QMainWindow):
     def _shortcut_quick_moyu(self) -> None:
         """
         函数: _shortcut_quick_moyu
-        作用: 处理 Ctrl+M 快捷键；若存在已保存路径，直接进入标准计算器并显示对应TXT内容；否则显示顶部路径输入框。
+        作用: 处理 Ctrl+M 快捷键；若存在已保存路径，直接进入标准计算器并显示对应电子书内容；否则显示顶部路径输入框。
         参数:
             无。
         返回:
@@ -883,7 +883,7 @@ class MainWindow(QMainWindow):
     def _shortcut_exit_moyu(self) -> None:
         """
         函数: _shortcut_exit_moyu
-        作用: 处理 Esc 快捷键；退出摸鱼模式，隐藏TXT窗口与顶部路径框，恢复正常计算。
+        作用: 处理 Esc 快捷键；退出摸鱼模式，隐藏电子书窗口与顶部路径框，恢复正常计算。
         参数:
             无。
         返回:
@@ -1647,7 +1647,7 @@ class MainWindow(QMainWindow):
 class _MoyuSettingsDialog(QDialog):
     """
     类: _MoyuSettingsDialog
-    作用: 摸鱼设置对话框，提供 TXT 目录与极简透明度输入，
+    作用: 摸鱼设置对话框，提供电子书目录与极简透明度输入，
           并包含“确定/取消/应用”按钮。
     """
 
@@ -1657,7 +1657,7 @@ class _MoyuSettingsDialog(QDialog):
         作用: 初始化设置对话框，填充初始路径与透明度。
         参数:
             parent: 父窗口。
-            init_path: 初始 TXT 目录路径。
+            init_path: 初始电子书目录路径。
             init_opacity: 初始透明度（1~100）。
         返回:
             无。
@@ -1671,7 +1671,7 @@ class _MoyuSettingsDialog(QDialog):
         # 表单
         self.path_edit = QLineEdit(self)
         try:
-            self.path_edit.setPlaceholderText("粘贴TXT目录路径后按回车或点击应用")
+            self.path_edit.setPlaceholderText("粘贴电子书目录路径后按回车或点击应用")
             if init_path:
                 self.path_edit.setText(init_path)
         except Exception:
@@ -1687,7 +1687,7 @@ class _MoyuSettingsDialog(QDialog):
         form.setContentsMargins(0, 0, 0, 0)
         form.setSpacing(8)
         try:
-            form.addRow("TXT目录", self.path_edit)
+            form.addRow("电子书目录", self.path_edit)
             form.addRow("极简透明度(1~100)", self.opacity_spin)
             self.hover_delay_spin = QSpinBox(self)
             self.hover_delay_spin.setRange(0, 10000)
@@ -1756,7 +1756,7 @@ class _MoyuSettingsDialog(QDialog):
         try:
             txt = (
                 "【参数说明】\n"
-                "- TXT目录：指定包含 .txt 文件的本地文件夹；确认后加载并保存路径。\n"
+                "- 电子书目录：指定包含 .txt 或 .epub 文件的本地文件夹；确认后加载并保存路径。\n"
                 "  范围：任意有效文件夹路径；默认值：上次保存的路径或为空。\n"
                 "- 极简透明度(1~100)：设置极简阅读窗口的不透明度。\n"
                 "  范围：1~100；默认值：100。\n"

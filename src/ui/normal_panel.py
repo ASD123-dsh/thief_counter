@@ -34,6 +34,7 @@ import time
 import re
 from bisect import bisect_right
 
+from core.book_loader import load_book_content, list_supported_book_files
 from core.expr_parser import safe_eval
 from core.memory_store import MemoryStore
 from core.settings_service import SettingsService
@@ -122,12 +123,12 @@ class NormalPanel(QWidget):
 
         # 摸鱼区域：隐藏设置按钮 + 路径输入框 + 文本展示
         self.moyu_settings_btn = QPushButton("设置")
-        self.moyu_settings_btn.setToolTip("摸鱼设置：指定TXT目录")
+        self.moyu_settings_btn.setToolTip("摸鱼设置：指定电子书目录")
         self.moyu_settings_btn.setVisible(False)
         self.moyu_settings_btn.clicked.connect(self._on_moyu_settings_clicked)
 
         self.moyu_path_edit = QLineEdit()
-        self.moyu_path_edit.setPlaceholderText("请输入TXT文件夹路径，例如: D:/docs 或 C:/notes")
+        self.moyu_path_edit.setPlaceholderText("请输入电子书文件夹路径，例如: D:/books 或 C:/notes")
         self.moyu_path_edit.setVisible(False)
         self.moyu_path_edit.returnPressed.connect(self._load_moyu_texts_from_path)
 
@@ -240,6 +241,7 @@ class NormalPanel(QWidget):
         self._minimal_reader = None
         self._moyu_prefetch_cache = {}
         self._moyu_full_text = ""
+        self._moyu_explicit_chapters = []  # type: list[tuple[str, int]]
         self._moyu_progress_key = ""
         self._loader_thread = None
         self._loader_worker = None
@@ -321,7 +323,7 @@ class NormalPanel(QWidget):
             "- 在数字键盘区域先输入密钥 666888 并点击‘=’解锁，顶部会显示‘设置’按键。\n"
             "- 快捷键：Ctrl+M（若已保存路径则直接进入并恢复上次观看记录）。快速进入\n"
             "【路径与透明度】\n"
-            "- 路径配置：点击‘设置’按钮后，弹出设置对话框后粘贴 TXT 目录并确认；\n"
+            "- 路径配置：点击‘设置’按钮后，弹出设置对话框后粘贴电子书目录并确认；支持 TXT 和 EPUB。\n"
             "- 透明度设置：在设置对话框中输入 1~100；输入 1 启用透明背景特例，文本固定半透明（0.5），并可在对话框中即时预览。\n"
             "【快速唤出】\n"
             "- 在摸鱼模式下连续点击四次‘=’，快速唤出极简阅读窗口。\n"
@@ -330,7 +332,7 @@ class NormalPanel(QWidget):
             "- 方向键：↑/← 上一页；↓/→ 下一页。\n"
             "- PageUp/PageDown：上一页/下一页。\n"
             "- W/S：上一页/下一页（摸鱼模式下全局响应）。\n"
-            "- 双击页码：可选择按页码或按章节跳转。\n"
+            "- 双击页码：可选择按页码或按章节跳转；EPUB 会优先使用书内目录。\n"
             "【极简阅读窗口】\n"
             "- 显示/隐藏：鼠标移入延迟 1.5 秒显示；移出立即隐藏。\n"
             "- 唤醒：仅当鼠标靠近窗口边缘或停留在窗口区域时唤醒；屏幕边缘不触发。\n"
@@ -1124,12 +1126,15 @@ class NormalPanel(QWidget):
     def _extract_moyu_chapters(self) -> list:
         """
         函数: _extract_moyu_chapters
-        作用: 从当前分页文本中提取章节目录，并映射到页码索引。
+        作用: 优先使用电子书自带章节目录；若不可用，再从当前分页文本中提取章节目录。
         参数:
             无。
         返回:
             list[tuple[str, int]]: (章节标题, 页索引)
         """
+        explicit = self._chapter_page_pairs_from_explicit_offsets()
+        if explicit:
+            return explicit
         chapters = []
         seen = set()
         try:
@@ -1148,6 +1153,52 @@ class NormalPanel(QWidget):
         except Exception:
             return []
         return chapters
+
+    def _chapter_page_pairs_from_explicit_offsets(self) -> list:
+        pairs = []
+        seen = set()
+        try:
+            chapters = self._moyu_explicit_chapters if isinstance(self._moyu_explicit_chapters, list) else []
+            for raw in chapters:
+                if not isinstance(raw, (tuple, list)) or len(raw) < 2:
+                    continue
+                title = str(raw[0] or "").strip().replace("\u3000", " ")
+                if not title:
+                    continue
+                try:
+                    offset = int(raw[1])
+                except Exception:
+                    continue
+                page = self._moyu_index_from_char_offset(offset)
+                key = (title.lower(), page)
+                if key in seen:
+                    continue
+                seen.add(key)
+                pairs.append((title, page))
+        except Exception:
+            return []
+        return pairs
+
+    def _register_moyu_loaded_chapters(self, chapters: object, text_base_offset: int) -> None:
+        try:
+            base_offset = max(0, int(text_base_offset))
+        except Exception:
+            base_offset = 0
+        try:
+            items = chapters if isinstance(chapters, (list, tuple)) else []
+            for raw in items:
+                if not isinstance(raw, (tuple, list)) or len(raw) < 2:
+                    continue
+                title = str(raw[0] or "").strip()
+                if not title:
+                    continue
+                try:
+                    offset = max(0, int(raw[1]))
+                except Exception:
+                    continue
+                self._moyu_explicit_chapters.append((title, base_offset + offset))
+        except Exception:
+            pass
 
     def _prompt_moyu_chapter_jump(self) -> None:
         """
@@ -1402,7 +1453,7 @@ class NormalPanel(QWidget):
     def _on_moyu_settings_clicked(self) -> None:
         """
         函数: _on_moyu_settings_clicked
-        作用: 显示或切换摸鱼路径输入框，用于粘贴TXT目录路径。
+        作用: 显示或切换摸鱼路径输入框，用于粘贴电子书目录路径。
         参数:
             无。
         返回:
@@ -1415,7 +1466,7 @@ class NormalPanel(QWidget):
     def load_moyu_texts_from_path(self, path: str) -> None:
         """
         函数: load_moyu_texts_from_path
-        作用: 根据传入目录路径，提供 .txt 文件选择器；若仅一个文件则直接加载，
+        作用: 根据传入目录路径，提供电子书文件选择器；若仅一个文件则直接加载，
               若存在多个文件则弹出选择器并仅加载所选文件；成功后隐藏本面板路径框（若可见）。
         参数:
             path: 目录路径字符串。
@@ -1423,23 +1474,21 @@ class NormalPanel(QWidget):
             无。
         """
         if not path:
-            self.history.addItem("[提示] 请输入TXT目录路径")
+            self.history.addItem("[提示] 请输入电子书目录路径")
             return
         if not os.path.isdir(path):
             self.history.addItem(f"[错误] 非有效目录: {path}")
             return
-        files = []
         try:
-            files = [f for f in os.listdir(path) if f.lower().endswith('.txt')]
-        except Exception as e:
-            self.history.addItem(f"[错误] 读取目录失败: {e}")
+            files = list_supported_book_files(path)
+        except Exception as exc:
+            self.history.addItem(f"[错误] {exc}")
             return
         if not files:
-            self.history.addItem("[提示] 目录下未找到 .txt 文件")
+            self.history.addItem("[提示] 目录下未找到支持的电子书文件（.txt / .epub）")
             self.moyu_view.clear()
             self.moyu_view.setVisible(False)
             return
-        files.sort()
         selected_mode = False
         selected_name = None
         try:
@@ -1456,7 +1505,12 @@ class NormalPanel(QWidget):
             pass
         try:
             if len(files) > 1:
-                fp, _ = QFileDialog.getOpenFileName(self, "选择TXT文件", path, "Text Files (*.txt)")
+                fp, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "选择电子书文件",
+                    path,
+                    "Books (*.txt *.epub);;Text Files (*.txt);;EPUB Files (*.epub)",
+                )
                 if not fp:
                     self.history.addItem("[提示] 已取消选择")
                     return
@@ -1465,7 +1519,7 @@ class NormalPanel(QWidget):
                 except Exception:
                     base = fp
                 if base not in files:
-                    self.history.addItem("[错误] 请选择当前目录内的 .txt 文件")
+                    self.history.addItem("[错误] 请选择当前目录内的 TXT 或 EPUB 文件")
                     return
                 files = [base]
                 selected_name = base
@@ -1491,6 +1545,7 @@ class NormalPanel(QWidget):
         self._moyu_line_cache.clear()
         self._moyu_chunk_buffer = ""
         self._moyu_full_text = ""
+        self._moyu_explicit_chapters = []
         # 计算内容宽度
         width = self._get_moyu_content_width()
         # 改为异步读取：将文件读取放入线程，主线程分页与渲染
@@ -1504,6 +1559,7 @@ class NormalPanel(QWidget):
             class _Worker(QObject):
                 textChunk = Signal(str)
                 headerChunk = Signal(str)
+                bookMeta = Signal(object)
                 fileEnded = Signal()
                 finished = Signal()
                 error = Signal(str)
@@ -1518,25 +1574,18 @@ class NormalPanel(QWidget):
                             fp = os.path.join(self.base_path, name)
                             if self.emit_header:
                                 self.headerChunk.emit(f"===== {name} =====\n")
-                            opened = False
-                            last_err = None
-                            for enc, opts in (("utf-8", {}), ("gbk", {"errors": "ignore"})):
-                                try:
-                                    with open(fp, 'r', encoding=enc, **opts) as f:
-                                        opened = True
-                                        while True:
-                                            chunk = f.read(64 * 1024)
-                                            if not chunk:
-                                                break
-                                            self.textChunk.emit(chunk)
-                                except Exception as e:
-                                    opened = False
-                                    last_err = e
-                                    continue
-                                if opened:
-                                    break
-                            if not opened and last_err is not None:
-                                self.error.emit(f"读取失败: {name} -> {last_err}")
+                            try:
+                                content = load_book_content(fp)
+                                self.bookMeta.emit({
+                                    "name": name,
+                                    "chapters": [(chapter.title, chapter.char_offset) for chapter in content.chapters],
+                                })
+                                text = content.text
+                                for idx in range(0, len(text), 64 * 1024):
+                                    chunk = text[idx:idx + (64 * 1024)]
+                                    self.textChunk.emit(chunk)
+                            except Exception as e:
+                                self.error.emit(f"读取失败: {name} -> {e}")
                             self.fileEnded.emit()
                         self.finished.emit()
                     except Exception as e:
@@ -1558,6 +1607,15 @@ class NormalPanel(QWidget):
                     pass
                 try:
                     QCoreApplication.processEvents()
+                except Exception:
+                    pass
+            def on_book_meta(meta: object) -> None:
+                try:
+                    if isinstance(meta, dict):
+                        chapters = meta.get("chapters", [])
+                    else:
+                        chapters = []
+                    self._register_moyu_loaded_chapters(chapters, len(self._moyu_full_text))
                 except Exception:
                     pass
             def on_chunk(s: str) -> None:
@@ -1641,6 +1699,7 @@ class NormalPanel(QWidget):
                 except Exception:
                     pass
             self._loader_worker.headerChunk.connect(on_header)
+            self._loader_worker.bookMeta.connect(on_book_meta)
             self._loader_worker.textChunk.connect(on_chunk)
             self._loader_worker.fileEnded.connect(on_file_end)
             self._loader_worker.finished.connect(on_finished)
@@ -1652,6 +1711,7 @@ class NormalPanel(QWidget):
             # 回退到同步模式（原有逻辑）
             for name in files:
                 fp = os.path.join(path, name)
+                opened = False
                 if not selected_mode and len(files) > 1:
                     header = f"===== {name} =====\n"
                     try:
@@ -1663,49 +1723,48 @@ class NormalPanel(QWidget):
                         self._moyu_full_text += header
                     except Exception:
                         pass
-                opened = False
-                for enc in (('utf-8', {}), ('gbk', {'errors': 'ignore'})):
-                    try:
-                        with open(fp, 'r', encoding=enc[0], **enc[1]) as f:
-                            opened = True
-                            while True:
-                                chunk = f.read(64 * 1024)
-                                if not chunk:
-                                    break
-                                combined = self._moyu_chunk_buffer + chunk
-                                parts = combined.splitlines(True)
-                                if parts:
-                                    if not (parts[-1].endswith("\n") or parts[-1].endswith("\r")):
-                                        self._moyu_chunk_buffer = parts[-1]
-                                        commit_text = "".join(parts[:-1])
-                                    else:
-                                        self._moyu_chunk_buffer = ""
-                                        commit_text = "".join(parts)
-                                else:
-                                    commit_text = combined
-                                    self._moyu_chunk_buffer = ""
-                                if commit_text:
-                                    lines = self._wrap_text_to_lines_doc(commit_text, width)
-                                    self._append_lines_to_pages(lines)
-                                    try:
-                                        self._moyu_full_text += commit_text
-                                    except Exception:
-                                        pass
-                                    try:
-                                        QCoreApplication.processEvents()
-                                    except Exception:
-                                        pass
-                            if self._moyu_chunk_buffer:
-                                tail_lines = self._wrap_text_to_lines_doc(self._moyu_chunk_buffer, width)
-                                self._append_lines_to_pages(tail_lines)
-                                try:
-                                    self._moyu_full_text += self._moyu_chunk_buffer
-                                except Exception:
-                                    pass
+                try:
+                    content = load_book_content(fp)
+                    self._register_moyu_loaded_chapters(
+                        [(chapter.title, chapter.char_offset) for chapter in content.chapters],
+                        len(self._moyu_full_text),
+                    )
+                    opened = True
+                    for idx in range(0, len(content.text), 64 * 1024):
+                        chunk = content.text[idx:idx + (64 * 1024)]
+                        combined = self._moyu_chunk_buffer + chunk
+                        parts = combined.splitlines(True)
+                        if parts:
+                            if not (parts[-1].endswith("\n") or parts[-1].endswith("\r")):
+                                self._moyu_chunk_buffer = parts[-1]
+                                commit_text = "".join(parts[:-1])
+                            else:
                                 self._moyu_chunk_buffer = ""
-                    except Exception:
-                        opened = False
-                        continue
+                                commit_text = "".join(parts)
+                        else:
+                            commit_text = combined
+                            self._moyu_chunk_buffer = ""
+                        if commit_text:
+                            lines = self._wrap_text_to_lines_doc(commit_text, width)
+                            self._append_lines_to_pages(lines)
+                            try:
+                                self._moyu_full_text += commit_text
+                            except Exception:
+                                pass
+                            try:
+                                QCoreApplication.processEvents()
+                            except Exception:
+                                pass
+                    if self._moyu_chunk_buffer:
+                        tail_lines = self._wrap_text_to_lines_doc(self._moyu_chunk_buffer, width)
+                        self._append_lines_to_pages(tail_lines)
+                        try:
+                            self._moyu_full_text += self._moyu_chunk_buffer
+                        except Exception:
+                            pass
+                        self._moyu_chunk_buffer = ""
+                except Exception:
+                    opened = False
                 if not opened:
                     self.history.addItem(f"[警告] 读取失败: {name}")
                 self._append_lines_to_pages([""])
